@@ -1,0 +1,3 @@
+[submodule "fastbvh"]
+	path = fastbvh
+	url = https://github.com/thorbenk/Fast-BVH.git
