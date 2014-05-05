@@ -159,6 +159,9 @@ int main(int argc, char **argv) {
     cout << "reading in only     " << maxObjects << " objects" << endl;
     }
     cout << endl;
+   
+    //swap, vigra order has z,y,x
+    shape = vigra::Shape3(shape[2], shape[1], shape[0]);
     
     Scene scn;
     OBJReader r(objFile);
@@ -180,8 +183,8 @@ int main(int argc, char **argv) {
     }
     cout << endl;
     
-    auto to_voxel_coor = [shape, start, stop](const Vector3& p) -> std::array<int, 3> {
-        std::array<int, 3> out;
+    auto to_voxel_coor = [shape, start, stop](const Vector3& p) -> std::array<long int, 3> {
+        std::array<long int, 3> out;
         for(int i=0; i<3; ++i) {
             out[i] = std::round( (p[i]-start[i])/((float)(stop[i]-start[i]))*shape[i] );
         }
@@ -195,9 +198,23 @@ int main(int argc, char **argv) {
         return out;
     };
 
-    vigra::MultiArray<3, uint16_t> vol(vigra::Shape3(shape[2], shape[1], shape[0]));
-    
-    cout << "*** tracing objects" << endl;
+    //vigra: axis order is z,y,x
+    typedef vigra::MultiArray<3, uint16_t> V;
+    V vol[3] = {V(shape), V(shape), V(shape)};
+   
+    for(int rayAxis = 0; rayAxis<3; ++rayAxis) {
+        int otherAxes[2];
+        {
+            int j = 0;
+            for(int i=0; i<3; ++i) { 
+                if(i!=rayAxis) {
+                    otherAxes[j] = i;
+                    ++j;
+                }
+            }
+        }
+        
+    cout << "*** tracing objects (ray axis = " << rayAxis << ")" << endl;
     for(uint32_t currentLabel = 0; currentLabel < scn.meshes.size(); ++currentLabel) {
         const Mesh& m = scn.meshes[currentLabel];
         if(!m.bvh()) {
@@ -213,88 +230,65 @@ int main(int argc, char **argv) {
         size_t nRays = 0;
         const int N = 1;
     
-        for(int x=0; x<shape[0]; ++x) {
-        for(int y=0; y<shape[1]; ++y) {
+        
+        vigra::TinyVector<vigra::MultiArrayIndex, 3> coord;
+        for(coord[otherAxes[0]]=0; coord[otherAxes[0]] < shape[otherAxes[0]]; ++coord[otherAxes[0]]) {
+        for(coord[otherAxes[1]]=0; coord[otherAxes[1]] < shape[otherAxes[1]]; ++coord[otherAxes[1]]) {
             cout << "  " << nRays << "/" << nRaysTotal << "                   \r" << std::flush;
             ++nRays;
            
-            if(N == 1) {
-                const float ox = x+0.5;
-                const float oy = y+0.5;
-                Vector3 rayStart = to_scene_coor(ox,oy,-10);
-                Ray ray(rayStart, Vector3(0,0,1));
-                IntersectionInfo I;
-                bool hit = bvh.getIntersection(ray, &I, false);
-                bool inside = false;
-                std::array<int, 3> prevVoxelCoor = {x,y,-10};
-                while(hit) {
-                    std::array<int, 3> currVoxelCoor = to_voxel_coor(I.hit);
-                    if(inside) {
-                        for(int z=prevVoxelCoor[2]+1; z<=currVoxelCoor[2]; ++z) {
-                            if(z >= 0 && z < shape[2]) {
-                                vol(z,y,x) = currentLabel + 1;
-                            }
+            float c[3] = {coord[0]+0.5f, coord[1]+0.5f, coord[2]+0.5f};
+            c[rayAxis] = -10.0f;
+            
+            const Vector3 normal(1 ? rayAxis==0 : 0, 1 ? rayAxis==1 : 0, 1 ? rayAxis==2 : 0);
+            
+            Vector3 rayStart = to_scene_coor(c[0], c[1], c[2]);
+            Ray ray(rayStart, normal);
+            IntersectionInfo I;
+            bool hit = bvh.getIntersection(ray, &I, false);
+            bool inside = false;
+            
+            std::array<long int, 3> prevVoxelCoor = {coord[0], coord[1], coord[2]};
+            prevVoxelCoor[rayAxis] = -10.0f;
+            
+            while(hit) {
+                std::array<long int, 3> currVoxelCoor = to_voxel_coor(I.hit);
+                if(inside) {
+                    vigra::MultiArrayIndex& t = coord[rayAxis];
+                    for(t=prevVoxelCoor[rayAxis]+1;
+                        t<=currVoxelCoor[rayAxis]; ++t)
+                    {
+                        if(t >= 0 && t < shape[2-rayAxis]) {
+                            vol[rayAxis](coord[2], coord[1], coord[0]) = currentLabel + 1;
                         }
                     }
-                    prevVoxelCoor = currVoxelCoor;
-                    rayStart = I.hit + 10*std::numeric_limits<float>::epsilon() * ray.d;
-                    inside = !inside;
-                    ray = Ray(rayStart, Vector3(0,0,1));
-                    hit = bvh.getIntersection(ray, &I, false);
                 }
-                
-            }
-            else {
-                vigra::MultiArray<2, uint8_t> columns(vigra::Shape2(N*N, shape[2]));
-                size_t currColumn = 0;
-                for(int w=0; w<N; ++w) {
-                for(int h=0; h<N; ++h) {
-                    const float ox = x+(w+1)/((float)(N+1));
-                    const float oy = y+(h+1)/((float)(N+1));
-                    Vector3 rayStart = to_scene_coor(ox,oy,-10);
-                    Ray ray(rayStart, Vector3(0,0,1));
-                    IntersectionInfo I;
-                    bool hit = bvh.getIntersection(ray, &I, false);
-                    bool inside = false;
-                    std::array<int, 3> prevVoxelCoor = {x,y,-10};
-                    while(hit) {
-                        std::array<int, 3> currVoxelCoor = to_voxel_coor(I.hit);
-                        if(inside) {
-                            for(int z=prevVoxelCoor[2]+1; z<=currVoxelCoor[2]; ++z) {
-                                if(z >= 0 && z < shape[2]) {
-                                    columns(currColumn, z) = currentLabel + 1;
-                                }
-                            }
-                        }
-                        prevVoxelCoor = currVoxelCoor;
-                        rayStart = I.hit + 10*std::numeric_limits< float >::epsilon() * ray.d;
-                        inside = !inside;
-                        ray = Ray(rayStart, Vector3(0,0,1));
-                        hit = bvh.getIntersection(ray, &I, false);
-                    }
-                    
-                ++currColumn;
-                }
-                }
-                std::vector<uint8_t> vals(N*N);
-                const size_t mid = N*N/2;
-                for(int z=0; z<shape[2]; ++z) {
-                    if(vol(z,y,x) != 0) { continue; } 
-                    const auto r = columns.bind<1>(z);
-                    std::copy(r.begin(), r.end(), vals.begin());
-                    std::sort(vals.begin(), vals.end());
-                    vol(z,y,x) = vals[mid];
-                }
+                prevVoxelCoor = currVoxelCoor;
+                rayStart = I.hit + 10*std::numeric_limits<float>::epsilon() * ray.d;
+                inside = !inside;
+                ray = Ray(rayStart, normal);
+                hit = bvh.getIntersection(ray, &I, false);
             }
         }
-        
-    }
+        }
     }
     cout << "  ... done tracing" << endl << endl;
     
+    } /* ray axis iteration */
+    
+    for(int i=0; i<vol[0].size(); ++i) {
+        const uint16_t a = vol[0][i];
+        const uint16_t b = vol[1][i];
+        const uint16_t c = vol[2][i];
+        if     ( a == b ) { vol[0][i] = a; }
+        else if( a == c ) { vol[0][i] = a; }
+        else if( b == c ) { vol[0][i] = b; }
+        else              { vol[0][i] = 0; }
+    }
+    
     cout << "writing file ... " << std::flush;
     vigra::HDF5File file(outFile, vigra::HDF5File::New);
-    file.write("labels", vol, 64, 1); 
+    file.write("labels", vol[0], 64, 1); 
     file.close();
     cout << " done" << endl;
 
