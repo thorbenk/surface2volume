@@ -19,7 +19,9 @@ void OBJReader::read(Scene& scene) const
    
     std::vector<std::string> toks;
     Mesh* m = 0;
+    size_t lineNo = 0;
     while (std::getline(f, line)) {
+        ++lineNo;
         if(line.size() == 0) continue;
         if(line[1] == ' ') {
             char c = line[0];
@@ -55,7 +57,10 @@ void OBJReader::read(Scene& scene) const
                 line = line.substr(2, line.size());
                 boost::split(toks, line, boost::is_any_of(" "));
                 if(toks.size() != 3) {
-                    throw std::runtime_error("vertices: unexpected number of tokens");
+                    std::stringstream ss;
+                    ss << "vertices: unexpected number of tokens" << std::endl;
+                    ss << "line: " << line << std::endl;
+                    throw std::runtime_error(ss.str());
                 }
                 Vector3 f;
                 std::transform(toks.begin(), toks.end(), &f[0], [](const std::string& s) { return std::stof(s); });
@@ -97,7 +102,9 @@ void OBJReader::read(Scene& scene) const
                     m->faces.push_back(f);
                 }
                 else {
-                    throw std::runtime_error("faces: unexpected number of tokens");
+                    std::stringstream ss;
+                    ss << "WARNING: line " << lineNo << ": faces: unexpected number of tokens: " << toks.size();
+                    std::cerr << ss.str() << std::endl;
                 }
             }
             else if(c == 's') {
