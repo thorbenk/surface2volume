@@ -11,7 +11,7 @@ add_definitions(-std=c++11)
 find_package(Vigra REQUIRED)
 include_directories(${VIGRA_INCLUDE_DIR})
 
-find_package(HDF5 REQUIRED)
+find_package(HDF5 COMPONENTS C HL REQUIRED)
 add_definitions(${HDF5_DEFINITIONS})
 
 find_package(Boost COMPONENTS program_options regex REQUIRED)
@@ -34,9 +34,7 @@ add_executable(surface2volume
 target_link_libraries(surface2volume
     fastbvh
     ${VIGRA_IMPEX_LIBRARY}
-    ${HDF5_C_LIBRARIES} 
-    ${HDF5_CXX_LIBRARIES} 
-    ${HDF5_HL_LIBRARIES} 
+    ${HDF5_LIBRARIES} 
     ${Boost_PROGRAM_OPTIONS_LIBRARY}
     ${Boost_REGEX_LIBRARY}
     hdf5_hl
