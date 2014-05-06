@@ -18,6 +18,7 @@
 #include "Triangle.h"
 #include "Mesh.h"
 #include "OBJReader.h"
+#include "CmdlineUtils.h"
 
 std::ostream& operator<<(std::ostream& o, const Vector3& v) {
     o << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
@@ -26,61 +27,6 @@ std::ostream& operator<<(std::ostream& o, const Vector3& v) {
 
 namespace po = boost::program_options;
 
-class FloatBBox {
-    public:
-    FloatBBox() {}
-    FloatBBox(const Vector3& s, const Vector3& t) : start(s), stop(t) {}
-    Vector3 start;
-    Vector3 stop;
-};
-
-std::istream& operator >>(std::istream& source, FloatBBox& target) {
-    std::string in;
-    source >> in;
-    const std::string f = "([-+]?[0-9]*\\.?[0-9]+)";
-    static const boost::regex e("\\("+f+","+f+","+f+"\\)\\("+f+","+f+","+f+"\\)");
-    boost::match_results<std::string::const_iterator> matches; 
-    
-    float num[6];
-    try {
-        boost::regex_match(in, matches, e);
-        for(size_t i=1; i<matches.size(); ++i) {
-            num[i-1] = boost::lexical_cast<float>(std::string(matches[i].first, matches[i].second));
-        }
-        target = FloatBBox(Vector3(num[0], num[1], num[2]), Vector3(num[3], num[4], num[5]));
-    }
-    catch(const std::exception& e) {
-        std::stringstream err;
-        err << "Could not parse '" << in << "' as a float bounding box" << std::endl;
-        throw std::runtime_error(err.str());
-    }
-    return source;
-}
-
-namespace vigra {
-std::istream& operator >>(std::istream& source, vigra::Shape3& target) {
-    std::string in;
-    source >> in;
-    const std::string i = "([0-9]+)";
-    static const boost::regex e("\\("+i+","+i+","+i+"\\)");
-    boost::match_results<std::string::const_iterator> matches; 
-    
-    int num[3];
-    try {
-        boost::regex_match(in, matches, e);
-        for(size_t i=1; i<matches.size(); ++i) {
-            num[i-1] = boost::lexical_cast<int>(std::string(matches[i].first, matches[i].second));
-        }
-        target = vigra::Shape3(num[0], num[1], num[2]);
-    }
-    catch(const std::exception& e) {
-        std::stringstream err;
-        err << "Could not parse '" << in << "' as an integer bounding box" << std::endl;
-        throw std::runtime_error(err.str());
-    }
-    return source;
-}
-} /* namespace vigra */
 
 int main(int argc, char **argv) {
     using std::cout;
@@ -198,7 +144,6 @@ int main(int argc, char **argv) {
         return out;
     };
 
-    //vigra: axis order is z,y,x
     typedef vigra::MultiArray<3, uint16_t> V;
     V vol[3] = {V(shape), V(shape), V(shape)};
    
@@ -214,68 +159,72 @@ int main(int argc, char **argv) {
             }
         }
         
-    cout << "*** tracing objects (ray axis = " << rayAxis << ")" << endl;
-    for(uint32_t currentLabel = 0; currentLabel < scn.meshes.size(); ++currentLabel) {
-        const Mesh& m = scn.meshes[currentLabel];
-        if(!m.bvh()) {
-            continue;
-        }
+        cout << "*** tracing objects (ray axis = " << rayAxis << ")" << endl;
+        for(uint32_t currentLabel = 0; currentLabel < scn.meshes.size(); ++currentLabel) {
+            const Mesh& m = scn.meshes[currentLabel];
+            if(!m.bvh()) {
+                continue;
+            }
+            
+            const BVH& bvh = *m.bvh();
+            cout << "  tracing " << currentLabel << "/" << scn.meshes.size()
+                    << " '" << scn.meshes[currentLabel].name() << "'"
+                    << endl;
         
-        const BVH& bvh = *m.bvh();
-        cout << "  tracing " << currentLabel << "/" << scn.meshes.size()
-                  << " '" << scn.meshes[currentLabel].name() << "'"
-                  << endl;
-    
-        size_t nRaysTotal = shape[0]*shape[1];
-        size_t nRays = 0;
-        const int N = 1;
-    
+            size_t nRaysTotal = shape[0]*shape[1];
+            size_t nRays = 0;
+            const int N = 1;
         
-        vigra::TinyVector<vigra::MultiArrayIndex, 3> coord;
-        for(coord[otherAxes[0]]=0; coord[otherAxes[0]] < shape[otherAxes[0]]; ++coord[otherAxes[0]]) {
-        for(coord[otherAxes[1]]=0; coord[otherAxes[1]] < shape[otherAxes[1]]; ++coord[otherAxes[1]]) {
-            cout << "  " << nRays << "/" << nRaysTotal << "                   \r" << std::flush;
-            ++nRays;
-           
-            float c[3] = {coord[0]+0.5f, coord[1]+0.5f, coord[2]+0.5f};
-            c[rayAxis] = -10.0f;
             
-            const Vector3 normal(1 ? rayAxis==0 : 0, 1 ? rayAxis==1 : 0, 1 ? rayAxis==2 : 0);
+            vigra::TinyVector<vigra::MultiArrayIndex, 3> coord;
+            for(coord[otherAxes[0]] = 0; coord[otherAxes[0]] < shape[otherAxes[0]];
+                ++coord[otherAxes[0]]) {
+            for(coord[otherAxes[1]] = 0; coord[otherAxes[1]] < shape[otherAxes[1]];
+                ++coord[otherAxes[1]]) {
+                cout << "  " << nRays << "/" << nRaysTotal << "                   \r" << std::flush;
+                ++nRays;
             
-            Vector3 rayStart = to_scene_coor(c[0], c[1], c[2]);
-            Ray ray(rayStart, normal);
-            IntersectionInfo I;
-            bool hit = bvh.getIntersection(ray, &I, false);
-            bool inside = false;
-            
-            std::array<long int, 3> prevVoxelCoor = {coord[0], coord[1], coord[2]};
-            prevVoxelCoor[rayAxis] = -10.0f;
-            
-            while(hit) {
-                std::array<long int, 3> currVoxelCoor = to_voxel_coor(I.hit);
-                if(inside) {
-                    vigra::MultiArrayIndex& t = coord[rayAxis];
-                    for(t=prevVoxelCoor[rayAxis]+1;
-                        t<=currVoxelCoor[rayAxis]; ++t)
-                    {
-                        if(t >= 0 && t < shape[2-rayAxis]) {
-                            vol[rayAxis](coord[2], coord[1], coord[0]) = currentLabel + 1;
+                float c[3] = {coord[0]+0.5f, coord[1]+0.5f, coord[2]+0.5f};
+                c[rayAxis] = -10.0f;
+                
+                const Vector3 normal(1 ? rayAxis==0 : 0,
+                                     1 ? rayAxis==1 : 0,
+                                     1 ? rayAxis==2 : 0);
+                
+                Vector3 rayStart = to_scene_coor(c[0], c[1], c[2]);
+                Ray ray(rayStart, normal);
+                IntersectionInfo I;
+                bool hit = bvh.getIntersection(ray, &I, false);
+                bool inside = false;
+                
+                std::array<long int, 3> prevVoxelCoor = {coord[0], coord[1], coord[2]};
+                prevVoxelCoor[rayAxis] = -10.0f;
+                
+                while(hit) {
+                    std::array<long int, 3> currVoxelCoor = to_voxel_coor(I.hit);
+                    if(inside) {
+                        vigra::MultiArrayIndex& t = coord[rayAxis];
+                        for(t=prevVoxelCoor[rayAxis]+1;
+                            t<=currVoxelCoor[rayAxis]; ++t)
+                        {
+                            if(t >= 0 && t < shape[2-rayAxis]) {
+                                vol[rayAxis](coord[2], coord[1], coord[0]) = currentLabel + 1;
+                            }
                         }
                     }
+                    prevVoxelCoor = currVoxelCoor;
+                    rayStart = I.hit + 10*std::numeric_limits<float>::epsilon() * ray.d;
+                    inside = !inside;
+                    ray = Ray(rayStart, normal);
+                    hit = bvh.getIntersection(ray, &I, false);
                 }
-                prevVoxelCoor = currVoxelCoor;
-                rayStart = I.hit + 10*std::numeric_limits<float>::epsilon() * ray.d;
-                inside = !inside;
-                ray = Ray(rayStart, normal);
-                hit = bvh.getIntersection(ray, &I, false);
             }
-        }
-        }
-    }
-    cout << "  ... done tracing" << endl << endl;
-    
+            }
+        } /* iteration over all objects in the scene */
+        cout << "  ... done tracing" << endl << endl;
     } /* ray axis iteration */
-    
+   
+    cout << "majority vote ... " << std::flush;
     for(int i=0; i<vol[0].size(); ++i) {
         const uint16_t a = vol[0][i];
         const uint16_t b = vol[1][i];
@@ -285,6 +234,7 @@ int main(int argc, char **argv) {
         else if( b == c ) { vol[0][i] = b; }
         else              { vol[0][i] = 0; }
     }
+    cout << " done" << endl;
     
     cout << "writing file ... " << std::flush;
     vigra::HDF5File file(outFile, vigra::HDF5File::New);

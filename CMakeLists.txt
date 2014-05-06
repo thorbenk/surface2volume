@@ -26,8 +26,9 @@ add_library(fastbvh SHARED
 )
 
 add_executable(surface2volume
-    Mesh.cpp
     OBJReader.cpp
+    CmdlineUtils.cpp
+    Mesh.cpp
     Scene.cpp
     surface2volume.cpp)
 target_link_libraries(surface2volume
